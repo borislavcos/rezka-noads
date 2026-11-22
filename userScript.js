@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.2.2
+// @version      0.3.0
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -19,6 +19,7 @@
     SEEK_STEP: 10,         // перемотка стрелками в плеере, сек
     SEEK_BIG: 60,          // перемотка кнопками FF / REW, сек
     FORCE_NAV: false,      // true - включить навигацию стрелками и на ПК (для теста)
+    LITE: true,            // true - только пре-ролл (быстрее): без баннеров, попапов и слежки за DOM
     CURSOR_DEFAULT: false, // true - режим курсора (мышка стрелками) включён сразу
     LONGPRESS_MS: 700,     // сколько держать OK, чтобы переключить режим курсора
     CURSOR_STEP: 5,        // шаг курсора при коротком нажатии, px
@@ -150,6 +151,7 @@
       }
     });
   }
+  if (!CFG.LITE) {
   patchSrc(window.HTMLScriptElement && HTMLScriptElement.prototype);
   patchSrc(window.HTMLIFrameElement && HTMLIFrameElement.prototype);
   patchSrc(window.HTMLMediaElement && HTMLMediaElement.prototype);
@@ -165,6 +167,8 @@
     } catch (e) {}
     return setAttr.call(this, name, value);
   };
+
+  }
 
   // То, что пришло прямо из HTML (мимо сеттеров), ловим наблюдателем
   function killNode(n) {
@@ -184,6 +188,7 @@
     var inner = document.querySelectorAll('script[src],iframe[src]');
     for (var k = 0; k < inner.length; k++) killNode(inner[k]);
   }
+  if (!CFG.LITE) {
   new MutationObserver(function (muts) {
     for (var i = 0; i < muts.length; i++) {
       var added = muts[i].addedNodes;
@@ -191,8 +196,10 @@
     }
     if (!scanT) scanT = setTimeout(scanInner, 400);
   }).observe(document.documentElement || document, { childList: true, subtree: true });
+  }
 
   // ---------- 3. Попапы и клики-перехватчики ----------
+  if (!CFG.LITE) {
   var fakeWin = {
     closed: true, close: function () {}, focus: function () {}, blur: function () {},
     postMessage: function () {}, document: { write: function () {}, close: function () {} }, location: {}
@@ -210,6 +217,7 @@
       hit('link', a.href);
     }
   }, true);
+  }
 
   // ---------- 4. Конфиг плеера: вычищаем preroll/vast ----------
   var AD_KEY = /^((pre|mid|post|pause)rolls?|vast\w*|vpaid\w*|ads?|adv|advert\w*|advertising)$/i;
@@ -328,7 +336,7 @@
   }
   if (IS_TOP) {
     addCss(
-      CFG.HIDE_SELECTORS.join(',') + '{display:none!important}' +
+      (CFG.LITE ? '' : CFG.HIDE_SELECTORS.join(',') + '{display:none!important}') +
       '.rz-focus{outline:4px solid #ffcc00!important;outline-offset:2px!important;' +
         'box-shadow:0 0 0 7px rgba(0,0,0,.55)!important;border-radius:4px}' +
       '.rz-full{position:fixed!important;left:0!important;top:0!important;width:100vw!important;' +

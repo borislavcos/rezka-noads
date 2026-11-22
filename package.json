@@ -1,8 +1,8 @@
 {
   "name": "rezka-noads",
   "appName": "Rezka без рекламы",
-  "version": "0.2.2",
-  "description": "Режет пре-роллы и попапы на rezka, добавляет управление пультом.",
+  "version": "0.3.0",
+  "description": "Режет пре-ролл перед фильмом на rezka, курсор и пульт.",
   "packageType": "mods",
   "websiteURL": "https://rezka.ag/",
   "main": "userScript.js",
