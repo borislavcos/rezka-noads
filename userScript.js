@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.2.1
+// @version      0.2.2
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -21,6 +21,8 @@
     FORCE_NAV: false,      // true - включить навигацию стрелками и на ПК (для теста)
     CURSOR_DEFAULT: false, // true - режим курсора (мышка стрелками) включён сразу
     LONGPRESS_MS: 700,     // сколько держать OK, чтобы переключить режим курсора
+    CURSOR_STEP: 5,        // шаг курсора при коротком нажатии, px
+    CURSOR_MAX: 40,        // максимальный шаг при удержании стрелки, px
 
     // Домены рекламных сетей: всё, что отсюда, режется целиком
     AD_HOSTS: [
@@ -174,18 +176,20 @@
       if (n.parentNode) n.parentNode.removeChild(n);
     }
   }
+  // Проверяем только добавленный узел; вложенные script/iframe ищем одним проходом раз в 400 мс
+  // (раньше querySelectorAll гонялся по каждому добавленному узлу - на ТВ это сильно тормозило загрузку)
+  var scanT = 0;
+  function scanInner() {
+    scanT = 0;
+    var inner = document.querySelectorAll('script[src],iframe[src]');
+    for (var k = 0; k < inner.length; k++) killNode(inner[k]);
+  }
   new MutationObserver(function (muts) {
     for (var i = 0; i < muts.length; i++) {
       var added = muts[i].addedNodes;
-      for (var j = 0; j < added.length; j++) {
-        var n = added[j];
-        killNode(n);
-        if (n.querySelectorAll) {
-          var inner = n.querySelectorAll('script[src],iframe[src]');
-          for (var k = 0; k < inner.length; k++) killNode(inner[k]);
-        }
-      }
+      for (var j = 0; j < added.length; j++) killNode(added[j]);
     }
+    if (!scanT) scanT = setTimeout(scanInner, 400);
   }).observe(document.documentElement || document, { childList: true, subtree: true });
 
   // ---------- 3. Попапы и клики-перехватчики ----------
@@ -287,6 +291,8 @@
         }
       }
       // кнопка "Пропустить" внутри плеера
+      // кнопка есть только пока идёт реклама, в начале ролика; дальше не тратим время
+      if (!(isAdVideo(v) || v.currentTime < 30)) continue;
       var box = playerBoxOf(v);
       if (!box) continue;
       var btns = box.querySelectorAll('div,span,a,button');
@@ -302,7 +308,7 @@
       }
     }
   }
-  setInterval(watchdog, 700);
+  setInterval(watchdog, 1000);
 
   // ---------- 6. CSS ----------
   // На старте документа ещё нет даже <html>, ждём его появления
@@ -532,7 +538,7 @@
     var now = Date.now();
     holdN = (dir === lastDir && now - lastMoveT < 300) ? holdN + 1 : 0;
     lastDir = dir; lastMoveT = now;
-    var step = Math.min(14 + holdN * 5, 90);
+    var step = Math.min(CFG.CURSOR_STEP + holdN * 2, CFG.CURSOR_MAX); // короткое нажатие - точный шаг, удержание - разгон
     var edge = 6, scrollStep = 90;
     if (dir === 'left') cx -= step;
     else if (dir === 'right') cx += step;
