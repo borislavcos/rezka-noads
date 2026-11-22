@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.2.0
+// @version      0.2.1
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -495,7 +495,7 @@
 
   // ---------- Режим курсора (стрелка-мышка) ----------
   var cursorOn = false, curEl = null, cx = 200, cy = 200, lastDir = '', holdN = 0, lastMoveT = 0;
-  var enterArmed = false, enterT = 0, enterLong = false;
+  var enterArmed = false, enterT = 0, enterLong = false, enterTimer = 0;
 
   function ensureCursor() {
     if (curEl && document.contains(curEl)) return curEl;
@@ -575,6 +575,7 @@
   window.addEventListener('keyup', function (e) {
     if (e.keyCode !== K.ENTER || !enterArmed) return;
     enterArmed = false;
+    clearTimeout(enterTimer);
     eat(e);
     if (!enterLong) enterAction(player());
   }, true);
@@ -620,19 +621,16 @@
     }
 
     // OK: короткое нажатие - клик (срабатывает при отпускании), долгое - переключить курсор
-    if (k === K.ENTER && !typing && (cursorOn || cur || e.repeat)) {
+    // Таймер, а не e.repeat: ТВ может не присылать повторные keydown при удержании
+    if (k === K.ENTER && !typing) {
       eat(e);
-      if (!e.repeat) { enterArmed = true; enterLong = false; enterT = Date.now(); }
-      else if (enterArmed && !enterLong && Date.now() - enterT >= CFG.LONGPRESS_MS) {
-        enterLong = true;
-        setCursor(!cursorOn);
+      if (!enterArmed) {
+        enterArmed = true; enterLong = false; enterT = Date.now();
+        clearTimeout(enterTimer);
+        enterTimer = setTimeout(function () {
+          if (enterArmed && !enterLong) { enterLong = true; setCursor(!cursorOn); }
+        }, CFG.LONGPRESS_MS);
       }
-      return;
-    }
-    if (k === K.ENTER && !typing && !cur && !cursorOn) {
-      // ничего не выбрано: долгое нажатие всё равно должно включать курсор
-      eat(e);
-      if (!e.repeat) { enterArmed = true; enterLong = false; enterT = Date.now(); }
       return;
     }
 
