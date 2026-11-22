@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.6
+// @version      0.3.7
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -19,6 +19,7 @@
     SEEK_STEP: 10,         // перемотка стрелками в плеере, сек
     SEEK_BIG: 60,          // перемотка кнопками FF / REW, сек
     FORCE_NAV: false,      // true - включить навигацию стрелками и на ПК (для теста)
+    SHOW_KEYS: true,       // true - показывать код каждой нажатой кнопки пульта (для отладки)
     LITE: true,            // true - только пре-ролл (быстрее): без баннеров, попапов и слежки за DOM
     CURSOR_DEFAULT: false, // true - режим курсора (мышка стрелками) включён сразу
     LONGPRESS_MS: 700,     // сколько держать OK, чтобы переключить режим курсора
@@ -642,6 +643,7 @@
 
   window.addEventListener('keydown', function (e) {
     var k = e.keyCode;
+    if (CFG.SHOW_KEYS) toast('key ' + k + (e.key ? ' ' + e.key : ''));
     var p = player();
     var typing = cur && /^(INPUT|TEXTAREA|SELECT)$/.test(cur.tagName) && document.activeElement === cur;
 
@@ -650,8 +652,11 @@
       // Play вне полного экрана: запустить фильм и сразу развернуть на весь экран
       if ((k === K.PLAYPAUSE || k === K.PLAY) && !isFull()) {
         eat(e);
-        if (p.v.paused) { var pr0 = p.v.play(); if (pr0 && pr0.catch) pr0.catch(function () {}); }
+        var pr0 = p.v.play(); if (pr0 && pr0.catch) pr0.catch(function () {});
         enterFull(p);
+        toast('Play: на весь экран');
+        // система может сама переключить паузу по медиа-кнопке - через мгновение вернём воспроизведение
+        setTimeout(function () { if (p.v.paused) { var q = p.v.play(); if (q && q.catch) q.catch(function () {}); } }, 350);
         return;
       }
       if (k === K.PLAYPAUSE || (k === K.PLAY && p.v.paused) || (k === K.PAUSE && !p.v.paused)) { eat(e); togglePlay(p); return; }
