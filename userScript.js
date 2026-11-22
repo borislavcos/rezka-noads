@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.0
+// @version      0.3.1
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -498,12 +498,20 @@
   }
 
   function isFull() {
-    return !!(fullBox && (fullBox.classList.contains('rz-full') || document.fullscreenElement || document.webkitFullscreenElement));
+    return !!(document.fullscreenElement || document.webkitFullscreenElement || (fullBox && fullBox.classList.contains('rz-full')));
   }
 
-  document.addEventListener('fullscreenchange', function () {
-    if (!document.fullscreenElement && fullBox && !fullBox.classList.contains('rz-full')) fullBox = null;
-  });
+  function placeCursor() {
+    if (!curEl) return;
+    var host = document.fullscreenElement || document.webkitFullscreenElement || document.body;
+    if (host && curEl.parentNode !== host) host.appendChild(curEl);
+  }
+  function onFs() {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement && fullBox && !fullBox.classList.contains('rz-full')) fullBox = null;
+    placeCursor();
+  }
+  document.addEventListener('fullscreenchange', onFs);
+  document.addEventListener('webkitfullscreenchange', onFs);
 
   function eat(e) { e.preventDefault(); e.stopPropagation(); }
 
@@ -532,7 +540,12 @@
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
     } catch (e) {}
   }
-  function setCursor(on) {
+  // Состояние курсора помним между страницами (localStorage сайта)
+  var LS_KEY = 'rzCursor';
+  function saveCursor() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ on: cursorOn, x: Math.round(cx), y: Math.round(cy) })); } catch (e) {}
+  }
+  function setCursor(on, silent) {
     cursorOn = on;
     if (on) {
       if (cur) { cur.classList.remove('rz-focus'); cur = null; }
@@ -540,7 +553,8 @@
       cy = Math.min(Math.max(cy, 0), innerHeight - 2);
     }
     drawCursor();
-    toast(on ? 'Курсор: вкл (удерживай OK - выкл)' : 'Курсор: выкл (удерживай OK - вкл)');
+    saveCursor();
+    if (!silent) toast(on ? 'Курсор: вкл (удерживай OK - выкл)' : 'Курсор: выкл (удерживай OK - вкл)');
   }
   function cursorMove(dir) {
     var now = Date.now();
@@ -558,18 +572,14 @@
     cx = Math.min(Math.max(cx, 0), innerWidth - 2);
     cy = Math.min(Math.max(cy, 0), innerHeight - 2);
     drawCursor();
+    saveCursor();
     var el = document.elementFromPoint(cx, cy);
     if (el && el !== curEl) { fire(el, 'mousemove'); fire(el, 'mouseover'); }
   }
   function cursorClick() {
     var el = document.elementFromPoint(cx, cy);
     if (!el) return;
-    var p = player();
-    if (p && (p.box === el || p.box.contains(el))) {
-      if (p.v.paused) togglePlay(p);
-      enterFull(p);
-      return;
-    }
+    // обычный клик как мышкой: шестерёнка, меню качества, кнопка fullscreen плеера работают сами
     fire(el, 'mousedown'); fire(el, 'mouseup');
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) { try { el.focus(); } catch (e) {} setFocus(el); }
     el.click();
@@ -584,7 +594,17 @@
       cur.click();
     }
   }
-  if (CFG.CURSOR_DEFAULT) whenRoot(function () { setTimeout(function () { setCursor(true); }, 800); });
+  (function restoreCursor() {
+    var on = CFG.CURSOR_DEFAULT;
+    try {
+      var st = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (st) { on = !!st.on; if (isFinite(st.x)) cx = st.x; if (isFinite(st.y)) cy = st.y; }
+    } catch (e) {}
+    if (!on) return;
+    // body появляется не сразу: ждём DOM, курсор рисуется без подсказки
+    function go() { setCursor(true, true); }
+    if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
+  })();
 
   window.addEventListener('keyup', function (e) {
     if (e.keyCode !== K.ENTER || !enterArmed) return;
@@ -608,7 +628,7 @@
     }
 
     // Режим плеера (полный экран)
-    if (p && isFull()) {
+    if (p && isFull() && !(cursorOn && k !== K.BACK && k !== K.ESC)) {
       if (k === K.LEFT) { eat(e); seek(p, -CFG.SEEK_STEP); return; }
       if (k === K.RIGHT) { eat(e); seek(p, CFG.SEEK_STEP); return; }
       if (k === K.ENTER) { eat(e); togglePlay(p); return; }
