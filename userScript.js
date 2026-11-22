@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.1.0
+// @version      0.2.0
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -19,6 +19,8 @@
     SEEK_STEP: 10,         // перемотка стрелками в плеере, сек
     SEEK_BIG: 60,          // перемотка кнопками FF / REW, сек
     FORCE_NAV: false,      // true - включить навигацию стрелками и на ПК (для теста)
+    CURSOR_DEFAULT: false, // true - режим курсора (мышка стрелками) включён сразу
+    LONGPRESS_MS: 700,     // сколько держать OK, чтобы переключить режим курсора
 
     // Домены рекламных сетей: всё, что отсюда, режется целиком
     AD_HOSTS: [
@@ -329,7 +331,9 @@
       '#rz-toast{position:fixed;left:50%;bottom:6vh;transform:translateX(-50%);z-index:2147483647;' +
         'background:rgba(0,0,0,.8);color:#fff;font:600 28px/1.3 sans-serif;padding:14px 28px;' +
         'border-radius:12px;pointer-events:none;opacity:0;transition:opacity .25s}' +
-      '#rz-toast.on{opacity:1}'
+      '#rz-toast.on{opacity:1}' +
+      '#rz-cursor{position:fixed;left:0;top:0;width:34px;height:34px;z-index:2147483647;' +
+        'pointer-events:none;display:none;margin:0;padding:0}'
     );
   }
 
@@ -353,7 +357,7 @@
   var K = {
     LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, ENTER: 13, BACK: 10009, ESC: 27,
     PLAYPAUSE: 10252, PLAY: 415, PAUSE: 19, STOP: 413, FF: 417, RW: 412,
-    CH_UP: 427, CH_DOWN: 428
+    CH_UP: 427, CH_DOWN: 428, RED: 403
   };
   var FOCUSABLE = [
     'a[href]', 'button', 'input', 'select', 'textarea', '[tabindex]', '[onclick]', '[role="button"]',
@@ -489,6 +493,92 @@
 
   function eat(e) { e.preventDefault(); e.stopPropagation(); }
 
+  // ---------- Режим курсора (стрелка-мышка) ----------
+  var cursorOn = false, curEl = null, cx = 200, cy = 200, lastDir = '', holdN = 0, lastMoveT = 0;
+  var enterArmed = false, enterT = 0, enterLong = false;
+
+  function ensureCursor() {
+    if (curEl && document.contains(curEl)) return curEl;
+    if (!document.body) return null;
+    curEl = document.createElement('div');
+    curEl.id = 'rz-cursor';
+    curEl.innerHTML = '<svg width="34" height="34" viewBox="0 0 34 34"><path d="M4 2 L4 26 L10 20 L15 31 L20 29 L15 18 L24 18 Z" ' +
+      'fill="#fff" stroke="#000" stroke-width="2" stroke-linejoin="round"/></svg>';
+    document.body.appendChild(curEl);
+    return curEl;
+  }
+  function drawCursor() {
+    var c = ensureCursor();
+    if (!c) return;
+    c.style.display = cursorOn ? 'block' : 'none';
+    c.style.transform = 'translate(' + cx + 'px,' + cy + 'px)';
+  }
+  function fire(el, type) {
+    try {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+    } catch (e) {}
+  }
+  function setCursor(on) {
+    cursorOn = on;
+    if (on) {
+      if (cur) { cur.classList.remove('rz-focus'); cur = null; }
+      cx = Math.min(Math.max(cx, 0), innerWidth - 2);
+      cy = Math.min(Math.max(cy, 0), innerHeight - 2);
+    }
+    drawCursor();
+    toast(on ? 'Курсор: вкл (удерживай OK - выкл)' : 'Курсор: выкл (удерживай OK - вкл)');
+  }
+  function cursorMove(dir) {
+    var now = Date.now();
+    holdN = (dir === lastDir && now - lastMoveT < 300) ? holdN + 1 : 0;
+    lastDir = dir; lastMoveT = now;
+    var step = Math.min(14 + holdN * 5, 90);
+    var edge = 6, scrollStep = 90;
+    if (dir === 'left') cx -= step;
+    else if (dir === 'right') cx += step;
+    else if (dir === 'up') {
+      if (cy <= edge) window.scrollBy(0, -scrollStep); else cy -= step;
+    } else {
+      if (cy >= innerHeight - edge - 2) window.scrollBy(0, scrollStep); else cy += step;
+    }
+    cx = Math.min(Math.max(cx, 0), innerWidth - 2);
+    cy = Math.min(Math.max(cy, 0), innerHeight - 2);
+    drawCursor();
+    var el = document.elementFromPoint(cx, cy);
+    if (el && el !== curEl) { fire(el, 'mousemove'); fire(el, 'mouseover'); }
+  }
+  function cursorClick() {
+    var el = document.elementFromPoint(cx, cy);
+    if (!el) return;
+    var p = player();
+    if (p && (p.box === el || p.box.contains(el))) {
+      if (p.v.paused) togglePlay(p);
+      enterFull(p);
+      return;
+    }
+    fire(el, 'mousedown'); fire(el, 'mouseup');
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) { try { el.focus(); } catch (e) {} setFocus(el); }
+    el.click();
+  }
+  function enterAction(p) {
+    if (cursorOn) return cursorClick();
+    if (!cur) return;
+    if (p && (cur === p.box || p.box.contains(cur) || cur.contains(p.box))) {
+      if (p.v.paused) togglePlay(p);
+      enterFull(p);
+    } else {
+      cur.click();
+    }
+  }
+  if (CFG.CURSOR_DEFAULT) whenRoot(function () { setTimeout(function () { setCursor(true); }, 800); });
+
+  window.addEventListener('keyup', function (e) {
+    if (e.keyCode !== K.ENTER || !enterArmed) return;
+    enterArmed = false;
+    eat(e);
+    if (!enterLong) enterAction(player());
+  }, true);
+
   window.addEventListener('keydown', function (e) {
     var k = e.keyCode;
     var p = player();
@@ -521,19 +611,28 @@
       cur = null; // следующая стрелка возьмёт ближайший элемент на новом экране
       return;
     }
-    if (k === K.UP) { eat(e); move('up'); return; }
-    if (k === K.DOWN) { eat(e); move('down'); return; }
-    if (k === K.LEFT && !typing) { eat(e); move('left'); return; }
-    if (k === K.RIGHT && !typing) { eat(e); move('right'); return; }
-
-    if (k === K.ENTER && cur && !typing) {
+    if (k === K.RED) { eat(e); setCursor(!cursorOn); return; }
+    var dirName = k === K.UP ? 'up' : k === K.DOWN ? 'down' : k === K.LEFT ? 'left' : k === K.RIGHT ? 'right' : '';
+    if (dirName && (!typing || dirName === 'up' || dirName === 'down')) {
       eat(e);
-      if (p && (cur === p.box || p.box.contains(cur) || cur.contains(p.box))) {
-        if (p.v.paused) togglePlay(p);
-        enterFull(p);
-      } else {
-        cur.click();
+      if (cursorOn) cursorMove(dirName); else move(dirName);
+      return;
+    }
+
+    // OK: короткое нажатие - клик (срабатывает при отпускании), долгое - переключить курсор
+    if (k === K.ENTER && !typing && (cursorOn || cur || e.repeat)) {
+      eat(e);
+      if (!e.repeat) { enterArmed = true; enterLong = false; enterT = Date.now(); }
+      else if (enterArmed && !enterLong && Date.now() - enterT >= CFG.LONGPRESS_MS) {
+        enterLong = true;
+        setCursor(!cursorOn);
       }
+      return;
+    }
+    if (k === K.ENTER && !typing && !cur && !cursorOn) {
+      // ничего не выбрано: долгое нажатие всё равно должно включать курсор
+      eat(e);
+      if (!e.repeat) { enterArmed = true; enterLong = false; enterT = Date.now(); }
       return;
     }
 
