@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.7
+// @version      0.3.8
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -19,7 +19,7 @@
     SEEK_STEP: 10,         // перемотка стрелками в плеере, сек
     SEEK_BIG: 60,          // перемотка кнопками FF / REW, сек
     FORCE_NAV: false,      // true - включить навигацию стрелками и на ПК (для теста)
-    SHOW_KEYS: true,       // true - показывать код каждой нажатой кнопки пульта (для отладки)
+    SHOW_KEYS: false,       // true - показывать код каждой нажатой кнопки пульта (для отладки)
     LITE: true,            // true - только пре-ролл (быстрее): без баннеров, попапов и слежки за DOM
     CURSOR_DEFAULT: false, // true - режим курсора (мышка стрелками) включён сразу
     LONGPRESS_MS: 700,     // сколько держать OK, чтобы переключить режим курсора
@@ -32,6 +32,7 @@
     CURSOR_MAX: 100,       // максимальный шаг курсора, px
     CH_SEEK: 15,           // перемотка кнопками каналов в плеере, сек
     CH_SEEK_FAST_AFTER: 2, // сколько быстрых нажатий подряд (или повторов при удержании), чтобы перемотка стала x2
+    PLAY_FS_MS: 2000,      // сколько держать Play, чтобы развернуть на весь экран
     BACK_EXIT_MS: 3000,    // сколько держать Back, чтобы закрыть приложение
 
     // Домены рекламных сетей: всё, что отсюда, режется целиком
@@ -621,7 +622,7 @@
     if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
   })();
 
-  var backArmed = false, backLong = false, backTimer = 0;
+  var backArmed = false, backLong = false, backTimer = 0, playArmed = false, playTimer = 0;
   function closeApp() {
     try { tizen.application.getCurrentApplication().exit(); return; } catch (e) {}
     try { window.close(); } catch (e2) {}
@@ -632,6 +633,12 @@
       clearTimeout(backTimer);
       eat(e);
       if (!backLong) history.back();
+      return;
+    }
+    if ((e.keyCode === K.PLAYPAUSE || e.keyCode === K.PLAY) && playArmed) {
+      playArmed = false;
+      clearTimeout(playTimer);
+      eat(e);
       return;
     }
     if (e.keyCode !== K.ENTER || !enterArmed) return;
@@ -649,14 +656,22 @@
 
     // Медиа-кнопки работают всегда, если есть фильм
     if (p) {
-      // Play вне полного экрана: запустить фильм и сразу развернуть на весь экран
+      // Play вне полного экрана: нажатие - пауза/play как обычно, удержание PLAY_FS_MS - играть и на весь экран
       if ((k === K.PLAYPAUSE || k === K.PLAY) && !isFull()) {
         eat(e);
-        var pr0 = p.v.play(); if (pr0 && pr0.catch) pr0.catch(function () {});
-        enterFull(p);
-        toast('Play: на весь экран');
-        // система может сама переключить паузу по медиа-кнопке - через мгновение вернём воспроизведение
-        setTimeout(function () { if (p.v.paused) { var q = p.v.play(); if (q && q.catch) q.catch(function () {}); } }, 350);
+        if (!playArmed) {
+          playArmed = true;
+          togglePlay(p);
+          clearTimeout(playTimer);
+          playTimer = setTimeout(function () {
+            if (!playArmed) return;
+            var pr0 = p.v.play(); if (pr0 && pr0.catch) pr0.catch(function () {});
+            enterFull(p);
+            toast('На весь экран');
+            setTimeout(function () { if (p.v.paused) { var q = p.v.play(); if (q && q.catch) q.catch(function () {}); } }, 350);
+            playTimer = setTimeout(function () { playArmed = false; }, 1500);
+          }, CFG.PLAY_FS_MS);
+        }
         return;
       }
       if (k === K.PLAYPAUSE || (k === K.PLAY && p.v.paused) || (k === K.PAUSE && !p.v.paused)) { eat(e); togglePlay(p); return; }
