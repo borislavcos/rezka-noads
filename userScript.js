@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.2
+// @version      0.3.3
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -25,8 +25,13 @@
     CH_STEP: 90,           // шаг кнопок каналов (листание страницы) при коротком нажатии, px
     CH_ACCEL: 35,          // прибавка к шагу на каждое повторение при удержании, px
     CH_MAX: 600,           // максимальный шаг при удержании, px
-    CURSOR_STEP: 5,        // шаг курсора при коротком нажатии, px
-    CURSOR_MAX: 40,        // максимальный шаг при удержании стрелки, px
+    CURSOR_STEP: 5,        // шаг курсора, px
+    CURSOR_FREE: 6,        // первые N шагов при удержании идут без ускорения
+    CURSOR_ACCEL: 8,       // дальше шаг растёт на столько px с каждым повтором
+    CURSOR_MAX: 100,       // максимальный шаг курсора, px
+    CH_SEEK: 15,           // перемотка кнопками каналов в плеере, сек
+    CH_SEEK_FAST_AFTER: 4, // сколько повторов держать, чтобы перемотка стала x2
+    BACK_EXIT_MS: 3000,    // сколько держать Back, чтобы закрыть приложение
 
     // Домены рекламных сетей: всё, что отсюда, режется целиком
     AD_HOSTS: [
@@ -350,7 +355,8 @@
         'border-radius:12px;pointer-events:none;opacity:0;transition:opacity .25s}' +
       '#rz-toast.on{opacity:1}' +
       '#rz-cursor{position:fixed;left:0;top:0;width:34px;height:34px;z-index:2147483647;' +
-        'pointer-events:none;display:none;margin:0;padding:0}'
+        'pointer-events:none;display:none;margin:0;padding:0;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}' +
+      '#rz-cursor path{fill:#fff;stroke:#16181d}#rz-cursor.rz-hot path{fill:#4da3ff;stroke:#0b2a4d}'
     );
   }
 
@@ -383,7 +389,7 @@
   ].join(',');
 
   var cur = null;
-  var chHold = 0, chLastK = 0, chLastT = 0;
+  var chHold = 0, chLastK = 0, chLastT = 0, sHold = 0, sLastK = 0, sLastT = 0;
   var fullBox = null;
 
   function visible(el) {
@@ -528,8 +534,8 @@
     if (!document.body) return null;
     curEl = document.createElement('div');
     curEl.id = 'rz-cursor';
-    curEl.innerHTML = '<svg width="34" height="34" viewBox="0 0 34 34"><path d="M4 2 L4 26 L10 20 L15 31 L20 29 L15 18 L24 18 Z" ' +
-      'fill="#fff" stroke="#000" stroke-width="2" stroke-linejoin="round"/></svg>';
+    curEl.innerHTML = '<svg width="30" height="30" viewBox="0 0 30 30"><path d="M3 2 L3 23 L8.2 18.2 L11.6 26 L15.4 24.4 L12 16.6 L19.6 16.6 Z" ' +
+      'stroke-width="1.8" stroke-linejoin="round"/></svg>';
     document.body.appendChild(curEl);
     return curEl;
   }
@@ -537,7 +543,7 @@
     var c = ensureCursor();
     if (!c) return;
     c.style.display = cursorOn ? 'block' : 'none';
-    c.style.transform = 'translate(' + cx + 'px,' + cy + 'px)';
+    c.style.transform = 'translate(' + (cx - 3) + 'px,' + (cy - 2) + 'px)';
   }
   function fire(el, type) {
     try {
@@ -564,7 +570,7 @@
     var now = Date.now();
     holdN = (dir === lastDir && now - lastMoveT < 300) ? holdN + 1 : 0;
     lastDir = dir; lastMoveT = now;
-    var step = Math.min(CFG.CURSOR_STEP + holdN * 2, CFG.CURSOR_MAX); // короткое нажатие - точный шаг, удержание - разгон
+    var step = holdN < CFG.CURSOR_FREE ? CFG.CURSOR_STEP : Math.min(CFG.CURSOR_STEP + (holdN - CFG.CURSOR_FREE + 1) * CFG.CURSOR_ACCEL, CFG.CURSOR_MAX);
     var edge = 6, scrollStep = 90;
     if (dir === 'left') cx -= step;
     else if (dir === 'right') cx += step;
@@ -578,7 +584,11 @@
     drawCursor();
     saveCursor();
     var el = document.elementFromPoint(cx, cy);
-    if (el && el !== curEl) { fire(el, 'mousemove'); fire(el, 'mouseover'); }
+    if (el && el !== curEl) {
+      fire(el, 'mousemove'); fire(el, 'mouseover');
+      var hot = !!(el.closest && el.closest('a[href],button,[onclick],[role="button"],input,select,label'));
+      if (curEl) curEl.className = hot ? 'rz-hot' : '';
+    }
   }
   function cursorClick() {
     var el = document.elementFromPoint(cx, cy);
@@ -610,7 +620,19 @@
     if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
   })();
 
+  var backArmed = false, backLong = false, backTimer = 0;
+  function closeApp() {
+    try { tizen.application.getCurrentApplication().exit(); return; } catch (e) {}
+    try { window.close(); } catch (e2) {}
+  }
   window.addEventListener('keyup', function (e) {
+    if (e.keyCode === K.BACK && backArmed) {
+      backArmed = false;
+      clearTimeout(backTimer);
+      eat(e);
+      if (!backLong) history.back();
+      return;
+    }
     if (e.keyCode !== K.ENTER || !enterArmed) return;
     enterArmed = false;
     clearTimeout(enterTimer);
@@ -626,8 +648,16 @@
     // Медиа-кнопки работают всегда, если есть фильм
     if (p) {
       if (k === K.PLAYPAUSE || (k === K.PLAY && p.v.paused) || (k === K.PAUSE && !p.v.paused)) { eat(e); togglePlay(p); return; }
-      if (k === K.FF || (k === K.CH_UP && isFull())) { eat(e); seek(p, CFG.SEEK_BIG); return; }
-      if (k === K.RW || (k === K.CH_DOWN && isFull())) { eat(e); seek(p, -CFG.SEEK_BIG); return; }
+      if (k === K.FF || k === K.RW || ((k === K.CH_UP || k === K.CH_DOWN) && isFull())) {
+        eat(e);
+        // перемотка CH_SEEK сек; если держишь кнопку - после нескольких повторов x2
+        var tn = Date.now();
+        sHold = (k === sLastK && tn - sLastT < 350) ? sHold + 1 : 0;
+        sLastK = k; sLastT = tn;
+        var sd = CFG.CH_SEEK * (sHold >= CFG.CH_SEEK_FAST_AFTER ? 2 : 1);
+        seek(p, (k === K.FF || k === K.CH_UP) ? sd : -sd);
+        return;
+      }
       if (k === K.STOP) { eat(e); p.v.pause(); exitFull(); return; }
     }
 
@@ -677,10 +707,20 @@
       return;
     }
 
+    // Back: короткое - назад (при отпускании), удержание BACK_EXIT_MS - закрыть приложение
     if (k === K.BACK) {
-      if (typing) { eat(e); cur.blur(); return; }
       eat(e);
-      history.back();
+      if (typing) { cur.blur(); return; }
+      if (!backArmed) {
+        backArmed = true; backLong = false;
+        clearTimeout(backTimer);
+        backTimer = setTimeout(function () {
+          if (!backArmed) return;
+          backLong = true;
+          toast('Закрываю приложение...');
+          setTimeout(closeApp, 250);
+        }, CFG.BACK_EXIT_MS);
+      }
     }
   }, true);
 
