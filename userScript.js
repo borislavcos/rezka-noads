@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.4
+// @version      0.3.5
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -647,6 +647,13 @@
 
     // Медиа-кнопки работают всегда, если есть фильм
     if (p) {
+      // Play вне полного экрана: запустить фильм и сразу развернуть на весь экран
+      if ((k === K.PLAYPAUSE || k === K.PLAY) && !isFull()) {
+        eat(e);
+        if (p.v.paused) { var pr0 = p.v.play(); if (pr0 && pr0.catch) pr0.catch(function () {}); }
+        enterFull(p);
+        return;
+      }
       if (k === K.PLAYPAUSE || (k === K.PLAY && p.v.paused) || (k === K.PAUSE && !p.v.paused)) { eat(e); togglePlay(p); return; }
       if (k === K.FF || k === K.RW || ((k === K.CH_UP || k === K.CH_DOWN) && isFull())) {
         eat(e);
