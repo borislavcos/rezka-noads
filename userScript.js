@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.1
+// @version      0.3.2
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -22,6 +22,9 @@
     LITE: true,            // true - только пре-ролл (быстрее): без баннеров, попапов и слежки за DOM
     CURSOR_DEFAULT: false, // true - режим курсора (мышка стрелками) включён сразу
     LONGPRESS_MS: 700,     // сколько держать OK, чтобы переключить режим курсора
+    CH_STEP: 90,           // шаг кнопок каналов (листание страницы) при коротком нажатии, px
+    CH_ACCEL: 35,          // прибавка к шагу на каждое повторение при удержании, px
+    CH_MAX: 600,           // максимальный шаг при удержании, px
     CURSOR_STEP: 5,        // шаг курсора при коротком нажатии, px
     CURSOR_MAX: 40,        // максимальный шаг при удержании стрелки, px
 
@@ -380,6 +383,7 @@
   ].join(',');
 
   var cur = null;
+  var chHold = 0, chLastK = 0, chLastT = 0;
   var fullBox = null;
 
   function visible(el) {
@@ -641,7 +645,12 @@
     // Качелька каналов - листать страницу целым экраном
     if (k === K.CH_UP || k === K.CH_DOWN) {
       eat(e);
-      window.scrollBy(0, (k === K.CH_DOWN ? 1 : -1) * innerHeight * 0.85);
+      // маленький шаг при коротком нажатии, при удержании плавный разгон
+      var nowT = Date.now();
+      chHold = (k === chLastK && nowT - chLastT < 350) ? chHold + 1 : 0;
+      chLastK = k; chLastT = nowT;
+      var chStep = Math.min(CFG.CH_STEP + chHold * CFG.CH_ACCEL, CFG.CH_MAX);
+      window.scrollBy(0, (k === K.CH_DOWN ? 1 : -1) * chStep);
       if (cur) cur.classList.remove('rz-focus');
       cur = null; // следующая стрелка возьмёт ближайший элемент на новом экране
       return;
