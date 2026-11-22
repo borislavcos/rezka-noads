@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.5
+// @version      0.3.6
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -672,11 +672,11 @@
     if (p && isFull() && !(cursorOn && k !== K.BACK && k !== K.ESC)) {
       if (k === K.LEFT || k === K.RIGHT) {
         eat(e);
-        // удержание стрелки (или быстрые нажатия) - перемотка ускоряется x2, потом x4
+        // удержание стрелки (или быстрые нажатия) - перемотка ускоряется x2
         var ta = Date.now();
         aHold = (k === aLastK && ta - aLastT < 600) ? aHold + 1 : 0;
         aLastK = k; aLastT = ta;
-        var am = aHold >= CFG.CH_SEEK_FAST_AFTER * 3 ? 4 : aHold >= CFG.CH_SEEK_FAST_AFTER ? 2 : 1;
+        var am = aHold >= CFG.CH_SEEK_FAST_AFTER ? 2 : 1;
         seek(p, (k === K.RIGHT ? 1 : -1) * CFG.SEEK_STEP * am);
         return;
       }
