@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.8
+// @version      0.3.9
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -28,8 +28,9 @@
     CH_MAX: 600,           // максимальный шаг при удержании, px
     CURSOR_STEP: 5,        // шаг курсора, px
     CURSOR_FREE: 6,        // первые N шагов при удержании идут без ускорения
-    CURSOR_ACCEL: 8,       // дальше шаг растёт на столько px с каждым повтором
-    CURSOR_MAX: 100,       // максимальный шаг курсора, px
+    CURSOR_ACCEL: 16,      // дальше шаг растёт на столько px с каждым повтором
+    CURSOR_MAX: 180,       // максимальный шаг курсора, px
+    CURSOR_HIDE_MS: 2500,  // в полном экране курсор прячется через столько мс без движения
     CH_SEEK: 15,           // перемотка кнопками каналов в плеере, сек
     CH_SEEK_FAST_AFTER: 2, // сколько быстрых нажатий подряд (или повторов при удержании), чтобы перемотка стала x2
     PLAY_FS_MS: 2000,      // сколько держать Play, чтобы развернуть на весь экран
@@ -500,6 +501,7 @@
       } catch (e) { done = false; }
     }
     if (!done) p.box.classList.add('rz-full');
+    setTimeout(afterFullChange, 400);
   }
 
   function exitFull() {
@@ -507,6 +509,7 @@
     var fe = document.fullscreenElement || document.webkitFullscreenElement;
     if (fe) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} }
     fullBox = null;
+    afterFullChange();
   }
 
   function isFull() {
@@ -521,6 +524,7 @@
   function onFs() {
     if (!document.fullscreenElement && !document.webkitFullscreenElement && fullBox && !fullBox.classList.contains('rz-full')) fullBox = null;
     placeCursor();
+    afterFullChange();
   }
   document.addEventListener('fullscreenchange', onFs);
   document.addEventListener('webkitfullscreenchange', onFs);
@@ -528,8 +532,38 @@
   function eat(e) { e.preventDefault(); e.stopPropagation(); }
 
   // ---------- Режим курсора (стрелка-мышка) ----------
-  var cursorOn = false, curEl = null, cx = 200, cy = 200, lastDir = '', holdN = 0, lastMoveT = 0;
+  var cursorOn = false, cursorHidden = false, hideT = 0, curEl = null, cx = 200, cy = 200, lastDir = '', holdN = 0, lastMoveT = 0;
   var enterArmed = false, enterT = 0, enterLong = false, enterTimer = 0;
+
+  // Полный экран: курсор прячется через пару секунд, любая стрелка возвращает его
+  function armHide() {
+    clearTimeout(hideT);
+    if (!cursorOn || !isFull()) return;
+    hideT = setTimeout(function () {
+      if (!cursorOn || !isFull()) return;
+      cursorHidden = true;
+      drawCursor();
+      // пусть плеер тоже уберёт свою панель, как будто мышь ушла
+      var box = fullBox || document.fullscreenElement || document.webkitFullscreenElement;
+      var el = document.elementFromPoint(cx, cy);
+      if (el) { fire(el, 'mouseout'); fire(el, 'mouseleave'); }
+      if (box && box !== el) { fire(box, 'mouseout'); fire(box, 'mouseleave'); }
+    }, CFG.CURSOR_HIDE_MS);
+  }
+  function centerCursor() {
+    cx = Math.round(innerWidth / 2); cy = Math.round(innerHeight / 2);
+    drawCursor();
+    saveCursor();
+  }
+  function afterFullChange() {
+    if (isFull()) { armHide(); return; }
+    clearTimeout(hideT);
+    cursorHidden = false;
+    if (cursorOn) {
+      centerCursor();
+      setTimeout(function () { if (cursorOn && !isFull()) centerCursor(); }, 150); // размер окна успевает обновиться
+    } else drawCursor();
+  }
 
   function ensureCursor() {
     if (curEl && document.contains(curEl)) return curEl;
@@ -544,9 +578,10 @@
   function drawCursor() {
     var c = ensureCursor();
     if (!c) return;
-    c.style.display = cursorOn ? 'block' : 'none';
+    c.style.display = (cursorOn && !cursorHidden) ? 'block' : 'none';
     c.style.transform = 'translate(' + (cx - 3) + 'px,' + (cy - 2) + 'px)';
   }
+  var HOT_SEL = 'a[href],button,[onclick],[role="button"],input,select,label';
   function fire(el, type) {
     try {
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
@@ -564,8 +599,10 @@
       cx = Math.min(Math.max(cx, 0), innerWidth - 2);
       cy = Math.min(Math.max(cy, 0), innerHeight - 2);
     }
+    cursorHidden = false;
     drawCursor();
     saveCursor();
+    armHide();
     if (!silent) toast(on ? 'Курсор: вкл (удерживай OK - выкл)' : 'Курсор: выкл (удерживай OK - вкл)');
   }
   function cursorMove(dir) {
@@ -583,18 +620,27 @@
     }
     cx = Math.min(Math.max(cx, 0), innerWidth - 2);
     cy = Math.min(Math.max(cy, 0), innerHeight - 2);
+    cursorHidden = false;
     drawCursor();
     saveCursor();
+    armHide();
     var el = document.elementFromPoint(cx, cy);
     if (el && el !== curEl) {
       fire(el, 'mousemove'); fire(el, 'mouseover');
-      var hot = !!(el.closest && el.closest('a[href],button,[onclick],[role="button"],input,select,label'));
+      var hot = !!(el.closest && el.closest(HOT_SEL));
       if (curEl) curEl.className = hot ? 'rz-hot' : '';
     }
   }
   function cursorClick() {
     var el = document.elementFromPoint(cx, cy);
     if (!el) return;
+    // клик по пустому месту (не на ссылке/кнопке и не в плеере) - фильм на весь экран
+    var pl = player();
+    if (pl && !isFull() && !(el.closest && el.closest(HOT_SEL)) && !(pl.box.contains(el) || el.contains(pl.box))) {
+      if (pl.v.paused) togglePlay(pl);
+      enterFull(pl);
+      return;
+    }
     // обычный клик как мышкой: шестерёнка, меню качества, кнопка fullscreen плеера работают сами
     fire(el, 'mousedown'); fire(el, 'mouseup');
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) { try { el.focus(); } catch (e) {} setFocus(el); }
@@ -602,7 +648,10 @@
   }
   function enterAction(p) {
     if (cursorOn) return cursorClick();
-    if (!cur) return;
+    if (!cur) {
+      if (p && !isFull()) { if (p.v.paused) togglePlay(p); enterFull(p); }
+      return;
+    }
     if (p && (cur === p.box || p.box.contains(cur) || cur.contains(p.box))) {
       if (p.v.paused) togglePlay(p);
       enterFull(p);
@@ -689,7 +738,7 @@
     }
 
     // Режим плеера (полный экран)
-    if (p && isFull() && !(cursorOn && k !== K.BACK && k !== K.ESC)) {
+    if (p && isFull() && !(cursorOn && !cursorHidden && k !== K.BACK && k !== K.ESC) && !(cursorOn && cursorHidden && k !== K.ENTER && k !== K.BACK && k !== K.ESC)) {
       if (k === K.LEFT || k === K.RIGHT) {
         eat(e);
         // удержание стрелки (или быстрые нажатия) - перемотка ускоряется x2
