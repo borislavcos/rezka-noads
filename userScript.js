@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka без рекламы (TizenBrew / Tampermonkey)
 // @namespace    rezka-noads
-// @version      0.3.3
+// @version      0.3.4
 // @description  Режет пре-роллы, попапы и баннеры на rezka. На ТВ добавляет навигацию пультом.
 // @include      /^https?:\/\/([^\/]*\.)?(hd)?rezka[^\/]*\//
 // @run-at       document-start
@@ -30,7 +30,7 @@
     CURSOR_ACCEL: 8,       // дальше шаг растёт на столько px с каждым повтором
     CURSOR_MAX: 100,       // максимальный шаг курсора, px
     CH_SEEK: 15,           // перемотка кнопками каналов в плеере, сек
-    CH_SEEK_FAST_AFTER: 4, // сколько повторов держать, чтобы перемотка стала x2
+    CH_SEEK_FAST_AFTER: 2, // сколько быстрых нажатий подряд (или повторов при удержании), чтобы перемотка стала x2
     BACK_EXIT_MS: 3000,    // сколько держать Back, чтобы закрыть приложение
 
     // Домены рекламных сетей: всё, что отсюда, режется целиком
@@ -389,7 +389,7 @@
   ].join(',');
 
   var cur = null;
-  var chHold = 0, chLastK = 0, chLastT = 0, sHold = 0, sLastK = 0, sLastT = 0;
+  var chHold = 0, chLastK = 0, chLastT = 0, sHold = 0, sLastK = 0, sLastT = 0, aHold = 0, aLastK = 0, aLastT = 0;
   var fullBox = null;
 
   function visible(el) {
@@ -652,7 +652,7 @@
         eat(e);
         // перемотка CH_SEEK сек; если держишь кнопку - после нескольких повторов x2
         var tn = Date.now();
-        sHold = (k === sLastK && tn - sLastT < 350) ? sHold + 1 : 0;
+        sHold = (k === sLastK && tn - sLastT < 600) ? sHold + 1 : 0;
         sLastK = k; sLastT = tn;
         var sd = CFG.CH_SEEK * (sHold >= CFG.CH_SEEK_FAST_AFTER ? 2 : 1);
         seek(p, (k === K.FF || k === K.CH_UP) ? sd : -sd);
@@ -663,8 +663,16 @@
 
     // Режим плеера (полный экран)
     if (p && isFull() && !(cursorOn && k !== K.BACK && k !== K.ESC)) {
-      if (k === K.LEFT) { eat(e); seek(p, -CFG.SEEK_STEP); return; }
-      if (k === K.RIGHT) { eat(e); seek(p, CFG.SEEK_STEP); return; }
+      if (k === K.LEFT || k === K.RIGHT) {
+        eat(e);
+        // удержание стрелки (или быстрые нажатия) - перемотка ускоряется x2, потом x4
+        var ta = Date.now();
+        aHold = (k === aLastK && ta - aLastT < 600) ? aHold + 1 : 0;
+        aLastK = k; aLastT = ta;
+        var am = aHold >= CFG.CH_SEEK_FAST_AFTER * 3 ? 4 : aHold >= CFG.CH_SEEK_FAST_AFTER ? 2 : 1;
+        seek(p, (k === K.RIGHT ? 1 : -1) * CFG.SEEK_STEP * am);
+        return;
+      }
       if (k === K.ENTER) { eat(e); togglePlay(p); return; }
       if (k === K.UP || k === K.DOWN) { eat(e); toast(fmt(p.v.currentTime) + ' / ' + fmt(p.v.duration)); return; }
       if (k === K.BACK || k === K.ESC) { eat(e); exitFull(); if (cur) setFocus(cur); return; }
@@ -677,7 +685,7 @@
       eat(e);
       // маленький шаг при коротком нажатии, при удержании плавный разгон
       var nowT = Date.now();
-      chHold = (k === chLastK && nowT - chLastT < 350) ? chHold + 1 : 0;
+      chHold = (k === chLastK && nowT - chLastT < 600) ? chHold + 1 : 0;
       chLastK = k; chLastT = nowT;
       var chStep = Math.min(CFG.CH_STEP + chHold * CFG.CH_ACCEL, CFG.CH_MAX);
       window.scrollBy(0, (k === K.CH_DOWN ? 1 : -1) * chStep);
